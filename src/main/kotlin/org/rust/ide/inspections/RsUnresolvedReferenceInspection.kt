@@ -10,8 +10,8 @@ import com.intellij.codeInspection.ProblemHighlightType
 import com.intellij.codeInspection.ProblemsHolder
 import com.intellij.codeInspection.ui.MultipleCheckboxOptionsPanel
 import com.intellij.psi.PsiElementVisitor
-import org.rust.ide.inspections.fixes.import.AutoImportFix
-import org.rust.ide.inspections.fixes.import.AutoImportHintFix
+import org.rust.ide.inspections.import.AutoImportFix
+import org.rust.ide.inspections.import.AutoImportHintFix
 import org.rust.ide.settings.RsCodeInsightSettings
 import org.rust.lang.core.psi.RsPath
 import org.rust.lang.core.psi.RsVisitor
