@@ -15,12 +15,13 @@ import com.intellij.codeInsight.lookup.LookupElementBuilder
 import com.intellij.notification.NotificationType
 import com.intellij.patterns.ElementPattern
 import com.intellij.patterns.PlatformPatterns
+import com.intellij.patterns.PsiElementPattern
 import com.intellij.patterns.VirtualFilePattern
 import com.intellij.psi.PsiElement
 import com.intellij.util.ProcessingContext
 import org.intellij.lang.annotations.Language
 import org.rust.ide.notifications.showBalloon
-import org.rust.ide.notifications.showBalloonWithoutProject
+import org.rust.lang.core.completion.or
 import org.rust.lang.core.psi.ext.ancestorStrict
 import org.toml.lang.psi.*
 import java.io.IOException
@@ -56,7 +57,7 @@ class CargoTomlKeysCompletionProvider : CompletionProvider<CompletionParameters>
                 val tableName = (table as? TomlHeaderOwner)?.header?.names?.firstOrNull()?.text
                     ?: return
                 if (isDependenciesTable(tableName)) {
-                    dependencies(parent)
+                    dependencies(key)
                 } else {
                     schema.keysForTable(tableName)
                 }
@@ -70,49 +71,75 @@ class CargoTomlKeysCompletionProvider : CompletionProvider<CompletionParameters>
         })
     }
 
-    private fun dependencies(parent: TomlKeyValue): Collection<String> {
-        val response = try {
-            val name = CompletionUtil.getOriginalElement(parent)?.text ?: ""
-            if (name.isEmpty()) return emptyList()
-            val url = "https://crates.io/api/v1/crates?page=1&per_page=20&q=$name&sort="
-            URL(url)
-                .openStream()
-                .bufferedReader()
-                .use { it.readText() }
-        } catch (e: IOException) {
-            parent.project.showBalloon("Could not reach crates.io", NotificationType.WARNING)
-            return emptyList()
-        }
-        return Gson().fromJson(response, Crates::class.java).crates.map { "${it.name} = \"${it.maxVersion}\"" }
-    }
-
-    private fun isDependenciesTable(tableName: String): Boolean {
-        // Matches all relevant names of table, like [dependencies], [dev-dependencies],
-        // [target.'cfg(unix)'.dev-dependencies], [target.x86_64-pc-windows-gnu.dependencies]
-        return tableName.endsWith("dependencies")
-    }
-
-    data class Crates(val crates: List<CrateDescription>)
-
-    data class CrateDescription(
-        val name: String,
-        @SerializedName("max_version") val maxVersion: String
-    )
-
-    private val TomlKey.topLevelTable: TomlKeyValueOwner?
-        get() {
-            val table = ancestorStrict<TomlKeyValueOwner>() ?: return null
-            if (table.parent !is TomlFile) return null
-            return table
-        }
-
     companion object {
-        val elementPattern: ElementPattern<PsiElement>
-            get() = PlatformPatterns.psiElement()
+        val elementPattern: ElementPattern<PsiElement> = PlatformPatterns.psiElement()
                 .inVirtualFile(VirtualFilePattern().withName("Cargo.toml"))
                 .withParent(TomlKey::class.java)
     }
 }
+
+class CargoTomlValuesCompletionProvider : CompletionProvider<CompletionParameters>() {
+    override fun addCompletions(parameters: CompletionParameters, context: ProcessingContext?, result: CompletionResultSet) {
+        val keyValue = parameters.position.ancestorStrict<TomlKeyValue>() ?: return
+        val table = keyValue.key.topLevelTable ?: return
+        val variants = run {
+            val tableName = (table as? TomlHeaderOwner)?.header?.names?.firstOrNull()?.text
+                ?: return
+            if (isDependenciesTable(tableName)) {
+                dependencies(keyValue.key)
+            } else {
+                return
+            }
+        }
+
+        result.addAllElements(variants.map {
+            LookupElementBuilder.create(it)
+        })
+    }
+
+    companion object {
+        val elementPattern: ElementPattern<PsiElement> =
+            PlatformPatterns.psiElement()
+                .inVirtualFile(VirtualFilePattern().withName("Cargo.toml"))
+                .inside(TomlKeyValue::class.java)
+    }
+}
+
+private data class Crates(val crates: List<CrateDescription>)
+
+private data class CrateDescription(
+    val name: String,
+    @SerializedName("max_version") val maxVersion: String
+)
+
+private fun isDependenciesTable(tableName: String): Boolean {
+    // Matches all relevant names of table, like [dependencies], [dev-dependencies],
+    // [target.'cfg(unix)'.dev-dependencies], [target.x86_64-pc-windows-gnu.dependencies]
+    return tableName.endsWith("dependencies")
+}
+
+private fun dependencies(key: TomlKey): Collection<String> {
+    val response = try {
+        val name = CompletionUtil.getOriginalElement(key)?.text ?: ""
+        if (name.isEmpty()) return emptyList()
+        val url = "https://crates.io/api/v1/crates?page=1&per_page=20&q=$name&sort="
+        URL(url)
+            .openStream()
+            .bufferedReader()
+            .use { it.readText() }
+    } catch (e: IOException) {
+        key.project.showBalloon("Could not reach crates.io", NotificationType.WARNING)
+        return emptyList()
+    }
+    return Gson().fromJson(response, Crates::class.java).crates.map { "${it.name} = \"${it.maxVersion}\"" }
+}
+
+private val TomlKey.topLevelTable: TomlKeyValueOwner?
+    get() {
+        val table = ancestorStrict<TomlKeyValueOwner>() ?: return null
+        if (table.parent !is TomlFile) return null
+        return table
+    }
 
 
 // Example from http://doc.crates.io/manifest.html,
